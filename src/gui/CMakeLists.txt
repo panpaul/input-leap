@@ -213,10 +213,12 @@ target_compile_definitions (input-leap PRIVATE -DINPUTLEAP_VERSION_STAGE="${INPU
 target_compile_definitions (input-leap PRIVATE -DINPUTLEAP_REVISION="${INPUTLEAP_REVISION}")
 
 if (BUILD_MSWINDOWS)
-    include_directories ($ENV{BONJOUR_SDK_HOME}/Include)
-    find_library (DNSSD_LIB dnssd.lib
-                  HINTS ENV BONJOUR_SDK_HOME
-                  PATH_SUFFIXES "Lib/x64")
+    include_directories (${BONJOUR_SDK_HOME}/Include)
+    find_library (DNSSD_LIB
+                  NAMES dnssd
+                  HINTS ${BONJOUR_SDK_HOME}
+                  PATH_SUFFIXES Lib
+                  REQUIRED)
     set_target_properties (input-leap PROPERTIES LINK_FLAGS "/NODEFAULTLIB:LIBCMT")
     target_link_libraries (input-leap ${DNSSD_LIB})
 endif()
