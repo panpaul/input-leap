@@ -1218,8 +1218,7 @@ bool MainWindow::isServiceRunning(QString name)
         return false;
     }
 
-    auto array = name.toLocal8Bit();
-    SC_HANDLE hService = OpenService(hSCManager, array.data(), SERVICE_QUERY_STATUS);
+    SC_HANDLE hService = OpenServiceW(hSCManager, name.toStdWString().c_str(), SERVICE_QUERY_STATUS);
 
     if (hService == nullptr) {
         appendLogDebug("failed to open service: " + name);
@@ -1287,7 +1286,11 @@ void MainWindow::downloadBonjour()
         m_DownloadMessageBox->setWindowTitle("InputLeap");
         m_DownloadMessageBox->setIcon(QMessageBox::Information);
         m_DownloadMessageBox->setText("Installing Bonjour, please wait...");
+#if QT_VERSION_MAJOR < 6
         m_DownloadMessageBox->setStandardButtons(0);
+#else
+        m_DownloadMessageBox->setStandardButtons(QMessageBox::NoButton);
+#endif
         m_pCancelButton = m_DownloadMessageBox->addButton(
             tr("Cancel"), QMessageBox::RejectRole);
     }

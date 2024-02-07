@@ -53,7 +53,7 @@ static void silence_avahi_warning()
     const char *name  = "AVAHI_COMPAT_NOWARN";
     const char *value = "1";
 #ifdef _WIN32
-    SetEnvironmentVariable(name, value);
+    SetEnvironmentVariableA(name, value);
 #else
     setenv(name, value, 1);
 #endif
