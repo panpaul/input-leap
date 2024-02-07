@@ -10,15 +10,9 @@ on:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-    inputs:
-      build_release:
-        description: 'Build Release binaries'
-        required: false
-        type: boolean
 
-# Set the build type here
 env:
-  B_BUILD_TYPE: ${{ (inputs.build_release || github.event_name == 'release') && 'Release' || 'Debug' }}
+  QT_VERSION: 6.5.3
 
 jobs:
   win-build:
@@ -27,75 +21,85 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2019, windows-2022]
+        os: [windows-2022]
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            qt-arch: msvc2019_64
+          - arch: arm64
+            qt-arch: msvc2019_arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
-          path: input-leap
+          path: ${{ github.workspace }}/code
           submodules: recursive
 
-      - name: Download Bonjour SDK-like
-        id: bonjour
-        run: |
-          $ErrorActionPreference = "Stop"
-          New-Item -Force -ItemType Directory -Path .\deps
-
-          Invoke-WebRequest 'https://github.com/nelsonjchen/mDNSResponder/releases/download/v2019.05.08.1/x64_RelWithDebInfo.zip' -OutFile 'deps\BonjourSDKLike.zip' ;
-          Expand-Archive .\deps\BonjourSDKLike.zip -DestinationPath .\deps\BonjourSDKLike
-          Remove-Item deps\BonjourSDKLike.zip
-
-          "path=$env:GITHUB_WORKSPACE\deps\BonjourSDKLike" >> $env:GITHUB_OUTPUT
+      - name: Install Qt (Host)
+        uses: jurplel/install-qt-action@v3
+        if: ${{ matrix.arch != 'x64' }}
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qt5compat'
+          arch: 'win64_msvc2019_64'
+          dir: ${{ github.workspace }}
+          cache: true
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: 5.15
+          version: ${{ env.QT_VERSION }}
+          modules: 'qt5compat'
+          arch: win64_${{ matrix.qt-arch }}
+          dir: ${{ github.workspace }}
           cache: true
-          cache-key-prefix: windows-${{matrix.os}}-Qt${{matrix.qt-version}}
 
-      - name: Configure build system
-        # NB. use cmd here to set variables from VsDevCmd.bat
-        shell: cmd
+      - name: Cache Dependencies
+        id: deps-cache
+        uses: actions/cache@v3
+        with:
+          key: deps-${{ hashFiles('code/win_build.ps1') }}
+          path: "deps"
+
+      - name: Prepare Dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        shell: pwsh
         run: |
-          call "%VS_PATH%\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=amd64
+          & "${{ github.workspace }}/code/win_build.ps1" "${{ github.workspace }}/code" ${{ matrix.arch }} deps
 
-          cmake -S input-leap -B build -G "%CMAKE_GEN%" -A x64 -D CMAKE_BUILD_TYPE=%B_BUILD_TYPE% ^
-            -DDNSSD_LIB="%BONJOUR_SDK_HOME%\Lib\x64\dnssd.lib" -D CMAKE_INSTALL_PREFIX=input-leap-install
+      - name: Configure
+        shell: pwsh
+        run: |
+          & "${{ github.workspace }}/code/win_build.ps1" "${{ github.workspace }}/code" ${{ matrix.arch }} configure
         env:
-          VS_PATH: ${{ matrix.os == 'windows-2019' && '%ProgramFiles(x86)%\Microsoft Visual Studio\2019' || '%ProgramFiles%\Microsoft Visual Studio\2022' }}
-          CMAKE_GEN: ${{ matrix.os == 'windows-2019' && 'Visual Studio 16 2019' || 'Visual Studio 17 2022' }}
-          BONJOUR_SDK_HOME: ${{ steps.bonjour.outputs.path }}
+            QT_ROOT_DIR: ${{ github.workspace }}/Qt/${{ env.QT_VERSION }}/${{ matrix.qt-arch }}
+            QT_HOST_PATH: ${{ github.workspace }}/Qt/${{ env.QT_VERSION }}/msvc2019_64
 
-      - name: Run build system
+      - name: Build
+        shell: pwsh
         run: |
-          cmake --build build --config $env:B_BUILD_TYPE --target install
+          & "${{ github.workspace }}/code/win_build.ps1" "${{ github.workspace }}/code" ${{ matrix.arch }} build
 
-      - name: Copy supporting binaries
+      - name: Deploy
+        shell: pwsh
         run: |
-          copy input-leap\ext\openssl\windows\x64\bin\*.dll input-leap-install\
+          & "${{ github.workspace }}/code/win_build.ps1" "${{ github.workspace }}/code" ${{ matrix.arch }} deploy
+        env:
+            QT_ROOT_DIR: ${{ github.workspace }}/Qt/${{ env.QT_VERSION }}/${{ matrix.qt-arch }}
 
-      - name: Archive Completed Build Directory
-        uses: vimtor/action-zip@v1
+      - name: Upload Build Directory
+        uses: actions/upload-artifact@v4
         with:
-          files: input-leap-install
-          dest: ${{ env.B_BUILD_TYPE }}.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}-${{ env.B_BUILD_TYPE }}
-          path: ${{ env.B_BUILD_TYPE }}.zip
+          name: ${{ matrix.os }}-${{ matrix.arch }}-build
+          path: "build"
+          compression-level: 9
           if-no-files-found: warn
 
-      # Only build & upload installer for release builds on windows-2022
-      - name: Build the Installer
-        if: matrix.os == 'windows-2022' && env.B_BUILD_TYPE == 'Release'
-        run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp .\build\installer-inno\input-leap.iss
-
-      - uses: actions/upload-artifact@v4
-        if: matrix.os == 'windows-2022' && env.B_BUILD_TYPE == 'Release'
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: .\build\installer-inno\bin
-          if-no-files-found: error
+          name: ${{ matrix.os }}-${{ matrix.arch }}-setup
+          path: "InputLeapSetup.exe"
+          compression-level: 9
+          if-no-files-found: warn
